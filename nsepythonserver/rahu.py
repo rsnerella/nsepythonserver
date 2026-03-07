@@ -83,16 +83,12 @@ def running_status():
 
 #Getting FNO Symboles
 def fnolist():
-    # df = pd.read_csv("https://www1.nseindia.com/content/fo/fo_mktlots.csv")
-    # return [x.strip(' ') for x in df.drop(df.index[3]).iloc[:,1].to_list()]
 
     positions = nsefetch('https://www.nseindia.com/api/equity-stockIndices?index=SECURITIES%20IN%20F%26O')
 
-    nselist=['NIFTY','NIFTYIT','BANKNIFTY']
-
     i=0
     for x in range(i, len(positions['data'])):
-        nselist=nselist+[positions['data'][x]['symbol']]
+        nselist=indices+[positions['data'][x]['symbol']]
 
     return nselist
 
@@ -102,14 +98,23 @@ def nsesymbolpurify(symbol):
 
 def nse_optionchain_scrapper(symbol):
     symbol = nsesymbolpurify(symbol)
-    if any(x in symbol for x in indices):
-        payload = nsefetch('https://www.nseindia.com/api/option-chain-indices?symbol='+symbol)
-    else:
-        payload = nsefetch('https://www.nseindia.com/api/option-chain-equities?symbol='+symbol)
+    dates = expiry_list(symbol, type="list")
+    if not dates:
+        return {}
+    latest_expiry = dates[0]
+    url = f'https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getOptionChainData&symbol={symbol}&params=expiryDate={latest_expiry}'
+    payload = nsefetch(url)
     return payload
 
 
 def oi_chain_builder(symbol,expiry="latest",oi_mode="full"):
+
+    if expiry == "latest":
+        dates = expiry_list(symbol, type="list")
+        if dates:
+            expiry = dates[0]
+        else:
+            return pd.DataFrame(), 0.0, ""
 
     payload = nse_optionchain_scrapper(symbol)
 
@@ -119,63 +124,70 @@ def oi_chain_builder(symbol,expiry="latest",oi_mode="full"):
         col_names = ['CALLS_Chart','CALLS_OI','CALLS_Chng in OI','CALLS_Volume','CALLS_IV','CALLS_LTP','CALLS_Net Chng','CALLS_Bid Qty','CALLS_Bid Price','CALLS_Ask Price','CALLS_Ask Qty','Strike Price','PUTS_Bid Qty','PUTS_Bid Price','PUTS_Ask Price','PUTS_Ask Qty','PUTS_Net Chng','PUTS_LTP','PUTS_IV','PUTS_Volume','PUTS_Chng in OI','PUTS_OI','PUTS_Chart']
     oi_data = pd.DataFrame(columns = col_names)
 
-    #oi_row = {'CALLS_OI':0, 'CALLS_Chng in OI':0, 'CALLS_Volume':0, 'CALLS_IV':0, 'CALLS_LTP':0, 'CALLS_Net Chng':0, 'Strike Price':0, 'PUTS_OI':0, 'PUTS_Chng in OI':0, 'PUTS_Volume':0, 'PUTS_IV':0, 'PUTS_LTP':0, 'PUTS_Net Chng':0}
-    oi_row = {'CALLS_OI':0, 'CALLS_Chng in OI':0, 'CALLS_Volume':0, 'CALLS_IV':0, 'CALLS_LTP':0, 'CALLS_Net Chng':0, 'CALLS_Bid Qty':0,'CALLS_Bid Price':0,'CALLS_Ask Price':0,'CALLS_Ask Qty':0,'Strike Price':0, 'PUTS_OI':0, 'PUTS_Chng in OI':0, 'PUTS_Volume':0, 'PUTS_IV':0, 'PUTS_LTP':0, 'PUTS_Net Chng':0,'PUTS_Bid Qty':0,'PUTS_Bid Price':0,'PUTS_Ask Price':0,'PUTS_Ask Qty':0}
-    if(expiry=="latest"):
-        expiry = payload['records']['expiryDates'][0]
-    m=0
-    for m in range(len(payload['records']['data'])):
-        if(payload['records']['data'][m]['expiryDate']==expiry):
-            if(1>0):
-                try:
-                    oi_row['CALLS_OI']=payload['records']['data'][m]['CE']['openInterest']
-                    oi_row['CALLS_Chng in OI']=payload['records']['data'][m]['CE']['changeinOpenInterest']
-                    oi_row['CALLS_Volume']=payload['records']['data'][m]['CE']['totalTradedVolume']
-                    oi_row['CALLS_IV']=payload['records']['data'][m]['CE']['impliedVolatility']
-                    oi_row['CALLS_LTP']=payload['records']['data'][m]['CE']['lastPrice']
-                    oi_row['CALLS_Net Chng']=payload['records']['data'][m]['CE']['change']
-                    if(oi_mode=='full'):
-                        oi_row['CALLS_Bid Qty']=payload['records']['data'][m]['CE']['bidQty']
-                        oi_row['CALLS_Bid Price']=payload['records']['data'][m]['CE']['bidprice']
-                        oi_row['CALLS_Ask Price']=payload['records']['data'][m]['CE']['askPrice']
-                        oi_row['CALLS_Ask Qty']=payload['records']['data'][m]['CE']['askQty']
-                except KeyError:
-                    oi_row['CALLS_OI'], oi_row['CALLS_Chng in OI'], oi_row['CALLS_Volume'], oi_row['CALLS_IV'], oi_row['CALLS_LTP'],oi_row['CALLS_Net Chng']=0,0,0,0,0,0
-                    if(oi_mode=='full'):
-                        oi_row['CALLS_Bid Qty'],oi_row['CALLS_Bid Price'],oi_row['CALLS_Ask Price'],oi_row['CALLS_Ask Qty']=0,0,0,0
-                    pass
+    # We will populate these dynamically
+    rows_list = []
+    
+    if 'expiryDates' not in payload:
+        # Fallback for new API structure
+        if(expiry=="latest"):
+            expiry = expiry_list(symbol, type="list")[0]
+        data_list = payload['data']
+    else:
+        # Legacy structure support
+        if(expiry=="latest"):
+            expiry = payload['records']['expiryDates'][0]
+        data_list = payload['records']['data']
 
-                oi_row['Strike Price']=payload['records']['data'][m]['strikePrice']
-
-                try:
-                    oi_row['PUTS_OI']=payload['records']['data'][m]['PE']['openInterest']
-                    oi_row['PUTS_Chng in OI']=payload['records']['data'][m]['PE']['changeinOpenInterest']
-                    oi_row['PUTS_Volume']=payload['records']['data'][m]['PE']['totalTradedVolume']
-                    oi_row['PUTS_IV']=payload['records']['data'][m]['PE']['impliedVolatility']
-                    oi_row['PUTS_LTP']=payload['records']['data'][m]['PE']['lastPrice']
-                    oi_row['PUTS_Net Chng']=payload['records']['data'][m]['PE']['change']
-                    if(oi_mode=='full'):
-                        oi_row['PUTS_Bid Qty']=payload['records']['data'][m]['PE']['bidQty']
-                        oi_row['PUTS_Bid Price']=payload['records']['data'][m]['PE']['bidprice']
-                        oi_row['PUTS_Ask Price']=payload['records']['data'][m]['PE']['askPrice']
-                        oi_row['PUTS_Ask Qty']=payload['records']['data'][m]['PE']['askQty']
-                except KeyError:
-                    oi_row['PUTS_OI'], oi_row['PUTS_Chng in OI'], oi_row['PUTS_Volume'], oi_row['PUTS_IV'], oi_row['PUTS_LTP'],oi_row['PUTS_Net Chng']=0,0,0,0,0,0
-                    if(oi_mode=='full'):
-                        oi_row['PUTS_Bid Qty'],oi_row['PUTS_Bid Price'],oi_row['PUTS_Ask Price'],oi_row['PUTS_Ask Qty']=0,0,0,0
+    for m in range(len(data_list)):
+        current_expiry_str = data_list[m].get('expiryDates') or data_list[m].get('expiryDate')
+        try:
+            # Convert both to date objects for robust comparison
+            if "-" in current_expiry_str:
+                parts = current_expiry_str.split("-")
+                if parts[1].isdigit(): fmt = "%d-%m-%Y"
+                else: fmt = "%d-%b-%Y"
+                curr_date = datetime.datetime.strptime(current_expiry_str, fmt).date()
+                
+                parts_exp = expiry.split("-")
+                if parts_exp[1].isdigit(): fmt_exp = "%d-%m-%Y"
+                else: fmt_exp = "%d-%b-%Y"
+                exp_date = datetime.datetime.strptime(expiry, fmt_exp).date()
+                match = (curr_date == exp_date)
             else:
-                logging.info(m)
+                match = (current_expiry_str == expiry)
+        except:
+            match = (current_expiry_str == expiry)
 
-            if(oi_mode=='full'):
-                oi_row['CALLS_Chart'],oi_row['PUTS_Chart']=0,0
-            #oi_data = oi_data.append(oi_row, ignore_index=True)
-            #oi_data = pd.concat([oi_data, oi_row], ignore_index=True)
-            oi_data = pd.concat([oi_data, pd.DataFrame([oi_row])], ignore_index=True)
+        if match:
+            oi_row = {col: 0 for col in col_names}
+            oi_row['Strike Price'] = data_list[m]['strikePrice']
 
+            for side in ['CE', 'PE']:
+                prefix = f"{'CALLS' if side == 'CE' else 'PUTS'}_"
+                if side in data_list[m] and data_list[m][side] is not None:
+                    d = data_list[m][side]
+                    oi_row[prefix + 'OI'] = d.get('openInterest', 0)
+                    oi_row[prefix + 'Chng in OI'] = d.get('changeinOpenInterest', 0)
+                    oi_row[prefix + 'Volume'] = d.get('totalTradedVolume', 0)
+                    oi_row[prefix + 'IV'] = d.get('impliedVolatility', 0)
+                    oi_row[prefix + 'LTP'] = d.get('lastPrice', 0)
+                    oi_row[prefix + 'Net Chng'] = d.get('change', 0)
+                    
+                    if oi_mode == 'full':
+                        # New API key mapping
+                        oi_row[prefix + 'Bid Qty'] = d.get('buyQuantity1', d.get('bidQty', 0))
+                        oi_row[prefix + 'Bid Price'] = d.get('buyPrice1', d.get('bidprice', 0))
+                        oi_row[prefix + 'Ask Price'] = d.get('sellPrice1', d.get('askPrice', 0))
+                        oi_row[prefix + 'Ask Qty'] = d.get('sellQuantity1', d.get('askQty', 0))
+                        oi_row[prefix + 'Chart'] = 0
 
+            rows_list.append(oi_row)
 
-            oi_data['time_stamp']=payload['records']['timestamp']
-    return oi_data,float(payload['records']['underlyingValue']),payload['records']['timestamp']
+    oi_data = pd.DataFrame(rows_list)
+    timestamp = payload.get('timestamp', payload.get('records', {}).get('timestamp', ''))
+    underlyingValue = payload.get('underlyingValue', payload.get('records', {}).get('underlyingValue', 0))
+    oi_data['time_stamp'] = timestamp
+    return oi_data, float(underlyingValue), timestamp
 
 
 def nse_quote(symbol,section=""):
@@ -194,18 +206,52 @@ def nse_quote(symbol,section=""):
         return payload
 
 
-def nse_expirydetails(payload,i=0):  #Can make problem. Use nse_expirydetails_by_symbol()
+def nse_expirydetails(payload, i=0, symbol=None):
+    expiry_dates = []
+    if 'records' in payload:
+        expiry_dates = payload['records']['expiryDates']
+    elif 'expiryDates' in payload:
+        expiry_dates = payload['expiryDates']
+    elif 'data' in payload:
+        unique_dates = set()
+        for entry in payload['data']:
+            if 'expiryDate' in entry:
+                unique_dates.add(entry['expiryDate'])
+        expiry_dates = sorted(list(unique_dates), key=lambda x: datetime.datetime.strptime(x, "%d-%b-%Y"))
 
-    expiry_dates = payload['records']['expiryDates']
-    expiry_dates = [datetime.datetime.strptime(date, "%d-%b-%Y").date() for date in expiry_dates]
-    expiry_dates = [date.strftime("%d-%b-%Y") for date in expiry_dates if date >= datetime.datetime.now().date()]
-    currentExpiry=expiry_dates[i]    
-    currentExpiry = datetime.datetime.strptime(currentExpiry,'%d-%b-%Y').date()  # converting json datetime to alice datetime
-    date_today = run_time.strftime('%Y-%m-%d')  # required to remove hh:mm:ss
-    date_today = datetime.datetime.strptime(date_today,'%Y-%m-%d').date()
-    dte = (currentExpiry - date_today).days
-    return currentExpiry,dte
+    # Filter future dates
+    future_expiry_dates = []
+    if expiry_dates:
+        temp_dates = [datetime.datetime.strptime(date, "%d-%b-%Y").date() for date in expiry_dates]
+        future_expiry_dates = sorted([date.strftime("%d-%b-%Y") for date in temp_dates if date >= datetime.datetime.now().date()], key=lambda x: datetime.datetime.strptime(x, "%d-%b-%Y"))
 
+    # Fallback to expiry_list if i is out of range and we can determine the symbol
+    if i >= len(future_expiry_dates):
+        if not symbol and 'data' in payload and len(payload['data']) > 0:
+            # Try to extract symbol from payload data
+            first_entry = payload['data'][0]
+            symbol = first_entry.get('symbol')
+            if not symbol:
+                if 'CE' in first_entry and first_entry['CE']:
+                    symbol = first_entry['CE'].get('underlying')
+                elif 'PE' in first_entry and first_entry['PE']:
+                    symbol = first_entry['PE'].get('underlying')
+        
+        if symbol:
+            dates = expiry_list(symbol, type="list")
+            if dates:
+                # Filter future dates from expiry_list as well
+                temp_dates = [datetime.datetime.strptime(date, "%d-%b-%Y").date() for date in dates]
+                future_expiry_dates = sorted([date.strftime("%d-%b-%Y") for date in temp_dates if date >= datetime.datetime.now().date()], key=lambda x: datetime.datetime.strptime(x, "%d-%b-%Y"))
+
+    if i >= len(future_expiry_dates):
+        return None, None
+
+    currentExpiry = future_expiry_dates[i]
+    currentExpiry_dt = datetime.datetime.strptime(currentExpiry, '%d-%b-%Y').date()
+    date_today = run_time.date()
+    dte = (currentExpiry_dt - date_today).days
+    return currentExpiry_dt, dte
 def pcr(payload,inp='0'):
     ce_oi = 0
     pe_oi = 0
@@ -392,19 +438,31 @@ def nse_past_results(symbol):
     symbol = nsesymbolpurify(symbol)
     return nsefetch('https://www.nseindia.com/api/results-comparision?symbol='+symbol)
 
-def expiry_list(symbol,type="list"):
-    logging.info("Getting Expiry List of: "+ symbol)
+def expiry_list(symbol, type=""):
+    logging.info("Getting Expiry List of: " + symbol)
+    symbol = nsesymbolpurify(symbol)
+    url = f'https://www.nseindia.com/api/NextApi/apiClient/GetQuoteApi?functionName=getOptionChainDropdown&symbol={symbol}'
+    payload = nsefetch(url)
+    
+    if not payload or 'expiryDates' not in payload:
+        return [] if type == "list" else pd.DataFrame()
 
-    if(type!="list"):
-        payload = nse_optionchain_scrapper(symbol)
-        payload = pd.DataFrame({'Date':payload['records']['expiryDates']})
-        return payload
-
-    if(type=="list"):
-        payload = nse_quote(symbol)
-        dates=list(set((payload["expiryDates"])))
-        dates.sort(key = lambda date: datetime.datetime.strptime(date, '%d-%b-%Y'))
-        return dates
+    expiry_dates = payload['expiryDates']
+    
+    # Format dates from DD-MM-YYYY to DD-Mon-YYYY
+    formatted_dates = []
+    for d in expiry_dates:
+        try:
+            dt = datetime.datetime.strptime(d, "%d-%m-%Y")
+            formatted_dates.append(dt.strftime("%d-%b-%Y"))
+        except:
+            formatted_dates.append(d)
+    
+    if type == "list":
+        return formatted_dates
+    else:
+        # If anything other than "list" is provided (like "df", "pandas", or default), return DataFrame
+        return pd.DataFrame({'Date': formatted_dates})
 
 
 def nse_custom_function_secfno(symbol,attribute="lastPrice"):
@@ -925,20 +983,40 @@ def is_market_open(segment = "FO"): #COM,CD,CB,CMOT,COM,FO,IRD,MF,NDM,NTRP,SLBS
 
 def nse_expirydetails_by_symbol(symbol,meta ="Futures",i=0):
     payload = nse_quote(symbol)
+    expiry_dates = []
 
-    if(meta=="Futures"):
-      selected_key = next((key for key in payload["expiryDatesByInstrument"] if "futures" in key.lower()), None)
-    if(meta=="Options"):
-      selected_key = next((key for key in payload["expiryDatesByInstrument"] if "options" in key.lower()), None)
+    try:
+        if(meta=="Futures"):
+            selected_key = next((key for key in payload["expiryDatesByInstrument"] if "futures" in key.lower()), None)
+        if(meta=="Options"):
+            selected_key = next((key for key in payload["expiryDatesByInstrument"] if "options" in key.lower()), None)
 
-    expiry_dates=payload["expiryDatesByInstrument"][selected_key]
-    expiry_dates = [datetime.datetime.strptime(date, "%d-%b-%Y").date() for date in expiry_dates]
-    expiry_dates = [date.strftime("%d-%b-%Y") for date in expiry_dates if date >= datetime.datetime.now().date()]
-    
-    currentExpiry=expiry_dates[i]
-    currentExpiry = datetime.datetime.strptime(currentExpiry,'%d-%b-%Y').date()    
-    dte = (currentExpiry - datetime.datetime.now().date()).days
-    return currentExpiry,dte
+        if selected_key:
+            expiry_dates = payload["expiryDatesByInstrument"][selected_key]
+    except (KeyError, TypeError):
+        expiry_dates = []
+
+    # Filter future dates
+    future_expiry_dates = []
+    if expiry_dates:
+        temp_dates = [datetime.datetime.strptime(date, "%d-%b-%Y").date() for date in expiry_dates]
+        future_expiry_dates = sorted([date.strftime("%d-%b-%Y") for date in temp_dates if date >= datetime.datetime.now().date()], key=lambda x: datetime.datetime.strptime(x, "%d-%b-%Y"))
+
+    # Fallback to expiry_list if i is out of range
+    if i >= len(future_expiry_dates):
+        dates = expiry_list(symbol, type="list")
+        if dates:
+            temp_dates = [datetime.datetime.strptime(date, "%d-%b-%Y").date() for date in dates]
+            future_expiry_dates = sorted([date.strftime("%d-%b-%Y") for date in temp_dates if date >= datetime.datetime.now().date()], key=lambda x: datetime.datetime.strptime(x, "%d-%b-%Y"))
+
+    if i >= len(future_expiry_dates):
+        return None, None
+
+    currentExpiry = future_expiry_dates[i]
+    currentExpiry_dt = datetime.datetime.strptime(currentExpiry, '%d-%b-%Y').date()
+    date_today = run_time.date()
+    dte = (currentExpiry_dt - date_today).days
+    return currentExpiry_dt, dte
 
 def security_wise_archive(from_date, to_date, symbol, series="ALL"):   
     base_url = "https://www.nseindia.com/api/historical/securityArchives"
